@@ -81,3 +81,85 @@ eta_cond_joint <- function(S, A, B, w, k, dbar = 0) {
   list(value = r$optimum, status = r$status,
        z = sol[nth + seq_len(J)], defier_by_cell = dfc)
 }
+
+
+#' @title Dual of the population-capped conditional bound
+#' @description Solves
+#'   \deqn{\max \sum_{x,l} a^{(x)}_l u^{(x)}_l + \sum_{x,j} b^{(x)}_j v^{(x)}_j
+#'         + \sum_x p_x\big(S(x) - b^{(x)}_k\big) - \bar d q}
+#'   subject to
+#'   \eqn{u^{(x)}_l + v^{(x)}_j - p_x 1\{(l,j)=(k,k)\} - q w(x) 1\{l>j\} \le 0},
+#'   \eqn{0 \le p_x \le w(x)} and \eqn{q \ge 0}.
+#'
+#'   Weak duality makes every feasible point a valid lower bound on the
+#'   conditional bound, hence on the truth. The objective is linear in the cell
+#'   marginals and in \eqn{S(x)}, so a point fixed on one fold turns the second
+#'   stage into the sample mean of a bounded transformed outcome.
+#'
+#'   The constraint \eqn{p_x \le w(x)} shows the dual scales with the cell
+#'   weights, so the returned variables are also given normalised by \eqn{w(x)}:
+#'   in that scaling \eqn{\tilde p_x \in [0,1]} and the stage-2 estimand is an
+#'   ordinary inverse-probability-weighted mean.
+#' @param S,A,B,w,k,dbar As in \code{eta_cond_joint}.
+#' @return A list with \code{value}, \code{status}, the raw \code{u}, \code{v}
+#'   (both \eqn{J \times K}), \code{p} (length J), \code{q}, and the normalised
+#'   \code{u_t}, \code{v_t}, \code{p_t}.
+#' @export
+eta_cond_joint_dual <- function(S, A, B, w, k, dbar = 0, dual_box = 2) {
+  J <- length(S); K <- ncol(A)
+  ui <- function(x, l) (x - 1L) * K + l
+  vi <- function(x, j) J * K + (x - 1L) * K + j
+  pi_ <- function(x) 2L * J * K + x
+  qi <- 2L * J * K + J + 1L
+  nv <- qi
+
+  obj <- numeric(nv)
+  for (x in 1:J) {
+    for (l in 1:K) obj[ui(x, l)] <- A[x, l]
+    for (j in 1:K) obj[vi(x, j)] <- B[x, j]
+    obj[pi_(x)] <- S[x] - B[x, k]
+  }
+  obj[qi] <- -dbar
+
+  rows <- list(); rhs <- numeric(0)
+  for (x in 1:J) for (l in 1:K) for (j in 1:K) {
+    v <- numeric(nv)
+    v[ui(x, l)] <- 1; v[vi(x, j)] <- v[vi(x, j)] + 1
+    if (l == k && j == k) v[pi_(x)] <- -1
+    if (l > j) v[qi] <- -w[x]
+    rows[[length(rows) + 1L]] <- v; rhs <- c(rhs, 0)
+  }
+  for (x in 1:J) {                                   # p_x <= w(x)
+    v <- numeric(nv); v[pi_(x)] <- 1
+    rows[[length(rows) + 1L]] <- v; rhs <- c(rhs, w[x])
+  }
+  M <- do.call(rbind, rows)
+
+  # u and v are free in the textbook dual, and that is a practical disaster:
+  # u_l = +100 with v_j = -100 is feasible, so an LP vertex can carry enormous
+  # components, and the second-stage estimate -- which is linear in the
+  # marginals with these as coefficients -- then has exploding variance and sits
+  # systematically below zero. Boxing them costs a little tightness and buys
+  # conditioning. The box is not arbitrary: at dbar = 0 the point corresponding
+  # to KR's closed form has coefficients 1{l >= k} on a and
+  # 1{j = k} - 1{j >= k} on b, all within [-1, 1], so a box of +-2 (in the
+  # normalised scaling, hence +-2*w(x) raw) still contains it.
+  free <- 1:(2L * J * K)
+  wrep <- rep(rep(w, each = 1L), times = 1L)
+  wcol <- c(rep(w, each = K), rep(w, each = K))      # w(x) for each u, v entry
+  bnds <- list(lower = list(ind = free, val = -dual_box * wcol),
+               upper = list(ind = free, val =  dual_box * wcol))
+  r <- Rglpk::Rglpk_solve_LP(obj, M, rep("<=", nrow(M)), rhs, bounds = bnds,
+                             max = TRUE)
+  if (r$status != 0) return(list(value = NA_real_, status = r$status))
+
+  s <- r$solution
+  U <- matrix(0, J, K); V <- matrix(0, J, K); P <- numeric(J)
+  for (x in 1:J) {
+    for (l in 1:K) U[x, l] <- s[ui(x, l)]
+    for (j in 1:K) V[x, j] <- s[vi(x, j)]
+    P[x] <- s[pi_(x)]
+  }
+  list(value = r$optimum, status = r$status, u = U, v = V, p = P, q = s[qi],
+       u_t = U / w, v_t = V / w, p_t = P / w)
+}

@@ -110,3 +110,103 @@ needs a prominent warning in the paper, not a footnote.
 The dual-variable route is built and verified but not yet wired into
 `lb_frac_affected_x`, so all the numbers above are identification-level. Wiring
 it in gives inference on the headline result, and that is the immediate task.
+
+---
+
+# Addendum — inference, and why the headline is not detectable
+
+## What was built and verified
+
+`R/lb_frac_affected_x_defiers.R`: stage 1 solves the dual of the joint program
+on one fold, stage 2 evaluates the resulting linear functional on the other.
+
+| check | result |
+|---|---|
+| strong duality, joint program | 2,359 tests, max $\|$primal $-$ dual$\|$ = $1.4\times10^{-16}$ |
+| stage-2 transformed-outcome form vs the dual objective | identical; with an oracle stage 1 the estimate equals the bound exactly in every configuration |
+| boxed dual still attains the primal | 1,821 tests, loose in 0 cases at a box of $\pm 2$ |
+
+The normalised dual constraints involve only $\tilde p_x \in [0,1]$ and
+$q \ge 0$, never the marginals. So the marginals enter the objective alone, any
+projection of the fold-1 marginals is harmless for validity, and a point solved
+with estimated cell weights stays feasible for the population program.
+
+## Two things I got wrong, and the checks that caught them
+
+**$\bar d$ must not be estimated.** I first raised $\bar d$ to the fold-1
+estimate of the minimum feasible defier share. That share is a maximum of
+survivor-function shortfalls — a supremum of noisy estimates — so it is biased
+**upward**, the mirror image of the winner's curse in $\sup_A \Delta$. On a 30%
+fold it came out at 0.045–0.052 against a full-sample 0.020, and at 0.05 the
+bound is zero. The symmetry is worth stating in the paper:
+
+| quantity | bias | effect on the bound | consequence |
+|---|---|---|---|
+| $\sup_A \Delta$ | up | too large | anticonservative |
+| minimum feasible $\bar d$ | up | too small | conservative, powerless |
+
+$\bar d$ is a sensitivity parameter, as in KR's `max_defiers_share`. It is taken
+as given and the full-sample minimum is reported separately.
+
+**The dual box is a pure scaling, not a regularisation.** The dual variables
+$u, v$ are free in the textbook dual, so a vertex can carry huge components; I
+boxed them expecting a bias–variance trade-off. There is none. Across
+$\text{box} \in \{0.1, 0.25, 0.5, 1, 2\}$ the bound and its standard error scale
+in exact proportion and **the $t$-ratio is invariant**:
+
+| covariate | $k$ | box 0.1 | 0.25 | 0.5 | 1 | 2 |
+|---|---|---|---|---|---|---|
+| `const` | 5 | 2.52 | 2.52 | 2.52 | 2.52 | 2.52 |
+| `grandmother_baseline` | 3 | 0.66 | 0.66 | 0.66 | 0.66 | 0.66 |
+| `grandmother_baseline` | 4 | 0.63 | 0.63 | 0.63 | 0.63 | 0.63 |
+
+The box stops binding at 0.5, beyond which the dual attains the primal. So
+there is no free power in the choice of dual point within this family, and the
+$t$-ratio is a property of the data.
+
+## The answer
+
+Oracle stage 1 (dual point from the full sample), $\bar d = 0.021$:
+
+| covariate | $k$ | bound | SE | LCB | bound/SE |
+|---|---|---|---|---|---|
+| `grandmother_baseline` | 3 | 0.0236 | 0.0355 | 0 | 0.66 |
+| `grandmother_baseline` | 4 | 0.0259 | 0.0409 | 0 | 0.63 |
+| `const` (pooled) | 5 | 0.0735 | 0.0291 | **0.0256** | 2.52 |
+| `grandmother_baseline` | 5 | 0.0690 | 0.0293 | **0.0208** | 2.35 |
+
+**The identification result at $k=3$ and $k=4$ is real and not detectable at
+$n = 568$.** The bound is smaller than one standard error. This is not a defect
+of the estimator: the oracle stage 1 produces the bound exactly and carries the
+same standard error.
+
+**Where there is power, conditioning does not help.** At $k=5$ the bound is
+comfortably significant, but the conditional bound (0.0690) is *below* the
+pooled one (0.0735) — the cell-versus-population effect again.
+
+**Sample splitting is not viable here.** With $n = 568$, $K = 5$ and two cells,
+a 30% first fold has about 170 observations to estimate ten marginals and
+$\hat A_k$, and the split-sample point estimates come out systematically
+negative. The oracle numbers above are therefore an upper bound on what any
+split-sample procedure achieves on this data.
+
+## Where that leaves the project
+
+The methodological results stand and are verified: the ATE reformulation, the
+two-channel decomposition, the defier LP and its dual, and — the main one — that
+a population-level defier cap preserves dominance while a cell-level cap does
+not. The empirical section cannot carry a positive finding on Baranov at
+$n = 568$ with a five-valued mediator.
+
+Three routes, in order of how much they would change the paper:
+
+1. **Report the power calculation as the finding.** "The conditional bound is
+   twice the pooled bound at $k=3,4$; detecting it at 80% power needs
+   $n \approx (z/0.65)^2 \times 568 \approx 3{,}400$." That is a useful,
+   honest contribution and it costs nothing more to produce.
+2. **Drop sample splitting for the applications** and report the plug-in bound
+   with its bias characterised by the simulations, as KR do. Loses the
+   confidence statement, which was the second contribution.
+3. **Find a larger experiment** with a multivalued mediator. This is the only
+   route to a positive empirical finding, and it is the question deferred to
+   Jon.
