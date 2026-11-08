@@ -45,14 +45,18 @@
 #'   \code{nu}, \code{nu_se}, \code{nu_lcb}, \code{theta}, \code{n},
 #'   \code{n_stage2}, \code{n_cells}, \code{n_cells_degenerate},
 #'   \code{mass_degenerate}, \code{n_cells_nonmonotone},
-#'   \code{mass_nonmonotone}, \code{method}.
+#'   \code{mass_nonmonotone}, \code{max_cell_defier_share},
+#'   \code{defier_share_overall}, \code{method}.
 #'
-#'   A cell in which M | D = 1 does not stochastically dominate M | D = 0
-#'   contributes zero and is counted in \code{n_cells_nonmonotone}. KR's closed
-#'   form for \eqn{\tilde\theta_{kk}^{\min}} is derived under monotonicity and
-#'   returns invalid values without it, so this is a correctness guard and not a
-#'   convenience: on Baranov's five-valued mediator the unguarded expression
-#'   gives \eqn{-0.222} at \eqn{k = 2}.
+#'   Monotonicity is KR's Assumption 2 and is imposed, not tested. The returned
+#'   defier shares are the smallest total defier mass that would reconcile the
+#'   observed \eqn{M \mid D} marginals with \eqn{M(1) \ge M(0)}, overall and
+#'   across cells -- the same descriptive quantity \code{lb_frac_affected}
+#'   reports through \code{max_defiers_share}. They are reported rather than
+#'   acted on: a sample shortfall need not be a population violation, and when
+#'   the population sits on the boundary (no compliers) one appears in about
+#'   half of all cells by chance, so zeroing those cells would be valid but
+#'   would destroy power precisely in the designs of interest.
 #' @export
 lb_frac_affected_x <- function(df, d, m, y, x = NULL,
                                at_group = NULL,
@@ -139,14 +143,20 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
   # on the Baranov five-valued mediator it returns -0.222 at k = 2.
   # A violating cell therefore contributes zero, which is valid because
   # theta_kk(x) nu_k(x) >= 0, and is counted so the cost is visible.
-  monotone_ok <- function(j) {
-    if (length(j) == 0L) return(FALSE)
+  # Smallest total defier mass that would make the M | D marginals compatible
+  # with M(1) >= M(0): the largest shortfall in the survivor function. Zero
+  # means monotonicity holds in this subsample. Reported rather than acted on,
+  # the way lb_frac_affected reports max_defiers_share, because a sample
+  # shortfall need not be a population violation -- when the population sits on
+  # the boundary (the no-complier case) one appears about half the time.
+  min_defier <- function(j) {
+    if (length(j) == 0L) return(NA_real_)
     j1 <- j[D[j] == 1]; j0 <- j[D[j] == 0]
-    if (length(j1) == 0L || length(j0) == 0L) return(FALSE)
+    if (length(j1) == 0L || length(j0) == 0L) return(NA_real_)
     lv <- sort(unique(M[j]))
     s1 <- vapply(lv, function(v) mean(M[j1] >= v), numeric(1))
     s0 <- vapply(lv, function(v) mean(M[j0] >= v), numeric(1))
-    all(s1 >= s0 - 1e-9)
+    max(c(0, s0 - s1))
   }
 
   idx <- which(f2)
@@ -160,7 +170,7 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
   thc <- stats::setNames(numeric(length(lv)), lv)   # cell theta_kk_min
   w   <- stats::setNames(numeric(length(lv)), lv)   # cell weight
   degenerate <- stats::setNames(logical(length(lv)), lv)
-  nonmono    <- stats::setNames(logical(length(lv)), lv)
+  defier     <- stats::setNames(rep(NA_real_, length(lv)), lv)
   mu1 <- mu0 <- pih <- a1 <- b0 <- tau            # per-cell nuisances
 
   for (cx in lv) {
@@ -168,16 +178,20 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
     j1 <- j[D[j] == 1]
     j0 <- j[D[j] == 0]
     w[cx] <- length(j) / n2
-    if (length(j1) == 0L || length(j0) == 0L || !monotone_ok(j)) {
-      # No contrast available in this cell, or monotonicity fails in it.
-      # Contributing zero is valid either way, since theta_kk(x) nu_k(x) >= 0;
-      # it is conservative, and the thin-cell case is exactly the price of
-      # binning that motivates not binning at all.
+    if (length(j1) == 0L || length(j0) == 0L) {
+      # No contrast available in this cell. Contributing zero is valid, since
+      # theta_kk(x) nu_k(x) >= 0; it is conservative, and it is exactly the
+      # price of thin cells that motivates not binning at all.
       degenerate[cx] <- TRUE
-      nonmono[cx] <- length(j1) > 0L && length(j0) > 0L
       tau[cx] <- 0; thc[cx] <- 0
       next
     }
+    # A cell can fail stochastic dominance in sample while satisfying it in the
+    # population -- and does so about half the time when the population sits on
+    # the boundary, which is the no-complier case. Zeroing such a cell would be
+    # valid but would destroy power exactly where the design is most
+    # interesting, so the violation is recorded and reported, not acted on.
+    defier[cx] <- min_defier(j)
     pih[cx] <- length(j1) / length(j)
     mu1[cx] <- mean(g[j1]); mu0[cx] <- mean(g[j0])
     tau[cx] <- mu1[cx] - mu0[cx]
@@ -187,6 +201,8 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
 
   eta   <- sum(w * tau)
   theta <- sum(w * thc)
+
+  defier_overall <- min_defier(idx)
 
   # ------------------------------------------------- influence functions
   # Saturated AIPW: within a cell the treated and control residuals each sum to
@@ -211,14 +227,20 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
   eta_se  <- stats::sd(if_eta) / sqrt(n2)
   eta_lcb <- max(eta - z * eta_se, 0)
 
-  if (theta > 0) {
-    nu <- eta / theta
+  # The ratio divides by an estimated theta that can be very small -- for the
+  # second category of Baranov's five-valued mediator it is 0.040 -- and a
+  # slightly negative eta then becomes a large negative nu (-0.222 there). The
+  # numerator is truncated first, since nu >= 0, and the ratio is withheld when
+  # the denominator is too small to support it.
+  theta_floor <- 5 / n2
+  if (theta > theta_floor) {
+    nu <- max(eta, 0) / theta
     if_nu  <- (if_eta - nu * if_th) / theta        # delta method
     nu_se  <- stats::sd(if_nu) / sqrt(n2)
-    nu_lcb <- max(nu - z * nu_se, 0)
+    nu_lcb <- max(eta - z * eta_se, 0) / theta
   } else {
     nu <- nu_se <- NA_real_
-    nu_lcb <- 0
+    nu_lcb <- NA_real_
   }
 
   # The plug-in point estimate is the one practitioners compute: the supremum
@@ -237,7 +259,10 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
        n_cells = length(lv),
        n_cells_degenerate = sum(degenerate),
        mass_degenerate = sum(w[degenerate]),
-       n_cells_nonmonotone = sum(nonmono),
-       mass_nonmonotone = sum(w[nonmono]),
+       n_cells_nonmonotone = sum(defier > 1e-9, na.rm = TRUE),
+       mass_nonmonotone = sum(w[which(defier > 1e-9)]),
+       max_cell_defier_share = if (all(is.na(defier))) NA_real_ else
+                                 max(defier, na.rm = TRUE),
+       defier_share_overall = defier_overall,
        method = method)
 }

@@ -32,6 +32,16 @@
 #'   estimator is only doubly robust rather than unconditionally valid.
 #' @param outcome_reg If \code{TRUE} (default) the AIPW augmentation term is
 #'   fitted; if \code{FALSE} the estimator is plain Horvitz--Thompson.
+#' @param learner First-stage learner. \code{"glm"} is an additive logistic
+#'   regression; \code{"forest"} is a random forest via \pkg{ranger}. Validity
+#'   does not depend on this choice -- any \eqn{A} is dual-feasible -- but power
+#'   depends on it entirely. An additive GLM cannot represent a signal carried
+#'   by an interaction: with
+#'   \eqn{\delta(x) \propto \sin(2\pi(x_1 + x_2))} the GLM first stage has power
+#'   equal to size at every sample size up to 8000, because a logit is monotone
+#'   in its linear index while the signal oscillates. Stage 1 is a prediction
+#'   problem, so it should be given a prediction method.
+#' @param num_trees Trees per forest when \code{learner = "forest"}.
 #' @param alpha One-sided level. Default 0.05.
 #' @param split_frac Share of the sample for stage 1. Default 0.3; see
 #'   \code{lb_frac_affected_x}.
@@ -47,12 +57,17 @@ lb_frac_affected_x_cts <- function(df, d, m, y, x,
                                    at_group = NULL,
                                    pi_true = NULL,
                                    outcome_reg = TRUE,
+                                   learner = c("glm", "forest"),
+                                   num_trees = 200,
                                    alpha = 0.05,
                                    split_frac = 0.3,
                                    folds = NULL,
                                    seed = NULL,
                                    plugin = FALSE) {
 
+  learner <- match.arg(learner)
+  if (learner == "forest" && !requireNamespace("ranger", quietly = TRUE))
+    stop("learner = 'forest' needs the ranger package")
   if (is.null(at_group) || length(at_group) != 1L)
     stop("at_group must be a single value of m")
   if (is.null(x) || length(x) == 0L) stop("x is required")
@@ -88,13 +103,23 @@ lb_frac_affected_x_cts <- function(df, d, m, y, x,
     train <- data.frame(resp = resp[use], X[use, , drop = FALSE])
     if (nrow(train) < 5L || length(unique(train$resp)) < 2L)
       return(rep(if (nrow(train) > 0) mean(train$resp) else 0, n))
-    fo <- tryCatch(suppressWarnings(
-            stats::glm(fml, data = train, family = stats::binomial())),
-          error = function(e) NULL)
-    if (is.null(fo)) return(rep(mean(train$resp), n))
-    p <- tryCatch(as.numeric(stats::predict(fo, newdata = X, type = "response")),
-                  error = function(e) rep(mean(train$resp), n))
-    p[!is.finite(p)] <- mean(train$resp)
+    mu <- mean(train$resp)
+    p <- if (learner == "forest") {
+      fo <- tryCatch(ranger::ranger(fml, data = train, num.trees = num_trees,
+                                    min.node.size = 10, num.threads = 1),
+                     error = function(e) NULL)
+      if (is.null(fo)) rep(mu, n) else
+        tryCatch(as.numeric(stats::predict(fo, data = X)$predictions),
+                 error = function(e) rep(mu, n))
+    } else {
+      fo <- tryCatch(suppressWarnings(
+              stats::glm(fml, data = train, family = stats::binomial())),
+            error = function(e) NULL)
+      if (is.null(fo)) rep(mu, n) else
+        tryCatch(as.numeric(stats::predict(fo, newdata = X, type = "response")),
+                 error = function(e) rep(mu, n))
+    }
+    p[!is.finite(p)] <- mu
     p
   }
 
@@ -128,10 +153,20 @@ lb_frac_affected_x_cts <- function(df, d, m, y, x,
     reg <- function(use) {
       tr <- data.frame(resp = g[use], X[use, , drop = FALSE])
       if (nrow(tr) < length(x) + 2L) return(rep(if (nrow(tr)) mean(tr$resp) else 0, n))
-      fo <- tryCatch(stats::lm(fml, data = tr), error = function(e) NULL)
-      if (is.null(fo)) return(rep(mean(tr$resp), n))
-      p <- as.numeric(stats::predict(fo, newdata = X))
-      p[!is.finite(p)] <- mean(tr$resp); p
+      mu <- mean(tr$resp)
+      if (stats::sd(tr$resp) == 0) return(rep(mu, n))
+      p <- if (learner == "forest") {
+        fo <- tryCatch(ranger::ranger(fml, data = tr, num.trees = num_trees,
+                                      min.node.size = 10, num.threads = 1),
+                       error = function(e) NULL)
+        if (is.null(fo)) rep(mu, n) else
+          tryCatch(as.numeric(stats::predict(fo, data = X)$predictions),
+                   error = function(e) rep(mu, n))
+      } else {
+        fo <- tryCatch(stats::lm(fml, data = tr), error = function(e) NULL)
+        if (is.null(fo)) rep(mu, n) else as.numeric(stats::predict(fo, newdata = X))
+      }
+      p[!is.finite(p)] <- mu; p
     }
     mu1 <- reg(f1 & D == 1); mu0 <- reg(f1 & D == 0)
   } else {
@@ -148,11 +183,11 @@ lb_frac_affected_x_cts <- function(df, d, m, y, x,
   eta <- mean(psi)
   if (plugin) {
     return(list(eta = eta, eta_se = NA_real_, eta_lcb = NA_real_,
-                n = n, n_stage2 = n2, pi_known = pi_known, method = "plugin_cts"))
+                n = n, n_stage2 = n2, pi_known = pi_known, method = paste0("plugin_cts_", learner)))
   }
   eta_se  <- stats::sd(psi) / sqrt(n2)
   eta_lcb <- max(eta - stats::qnorm(1 - alpha) * eta_se, 0)
 
   list(eta = eta, eta_se = eta_se, eta_lcb = eta_lcb,
-       n = n, n_stage2 = n2, pi_known = pi_known, method = "split_cts")
+       n = n, n_stage2 = n2, pi_known = pi_known, method = paste0("split_cts_", learner))
 }

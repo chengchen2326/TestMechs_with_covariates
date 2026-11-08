@@ -38,7 +38,7 @@ for (sp in specs) {
   M <- t(vapply(seq_len(200), function(i) {
     r <- lb_frac_affected_x(bz2,"condition2","signed_up_number","applied_out_fl",
                             x=sp, at_group=0, method="split")
-    c(r$eta_lcb, r$n_cells, r$n_cells_degenerate, r$n_cells_nonmonotone, r$mass_degenerate)}, numeric(5)))
-  cat(sprintf("  %d covariate(s): cells %.1f | degenerate %.1f | of which nonmono %.1f | lost mass %.3f | LCB>0 %.2f\n",
-      length(sp), mean(M[,2]), mean(M[,3]), mean(M[,4]), mean(M[,5]), mean(M[,1]>0)))
+    c(r$eta_lcb, r$n_cells, r$n_cells_degenerate, r$n_cells_nonmonotone, r$mass_degenerate, r$max_cell_defier_share)}, numeric(6)))
+  cat(sprintf("  %d cov: cells %.1f | degenerate %.1f | lost mass %.3f | cells w/ defiers %.1f | max cell defier %.3f | LCB>0 %.2f\n",
+      length(sp), mean(M[,2]), mean(M[,3]), mean(M[,5]), mean(M[,4]), mean(M[,6]), mean(M[,1]>0)))
 }
