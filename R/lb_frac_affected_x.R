@@ -29,7 +29,15 @@
 #' @param at_group Value of M whose always-takers are of interest. Required.
 #' @param method One of \code{"split"}, \code{"plugin"}, \code{"pooled_split"}.
 #' @param alpha One-sided level for the lower confidence bound. Default 0.05.
-#' @param split_frac Share of the sample used for stage 1. Default 0.5.
+#' @param split_frac Share of the sample used for stage 1. Default 0.3. Stage 1
+#'   only has to pick a set, and any set is dual-feasible, so a poor choice
+#'   costs tightness rather than validity; stage 2 is where the central limit
+#'   theorem is applied. That argues for giving stage 1 less than half, but not
+#'   much less, since a very noisy \eqn{\hat A_k} shrinks the estimand itself.
+#'   A sweep over 0.1--0.7 (see \code{simulations/split_sweep.R}) puts the
+#'   optimum at 0.2--0.3: on Baranov, moving from 0.5 to 0.3 raises the share
+#'   of splits with a positive 95\% bound from 0.85 to 0.97 and the median
+#'   bound from 0.078 to 0.093.
 #' @param folds Optional integer vector of 1s and 2s, length \code{nrow(df)},
 #'   overriding the random split.
 #' @param seed Optional seed for the split.
@@ -42,7 +50,7 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
                                at_group = NULL,
                                method = c("split", "plugin", "pooled_split"),
                                alpha = 0.05,
-                               split_frac = 0.5,
+                               split_frac = 0.3,
                                folds = NULL,
                                seed = NULL) {
 
