@@ -44,7 +44,15 @@
 #' @return A list with \code{eta}, \code{eta_se}, \code{eta_lcb},
 #'   \code{nu}, \code{nu_se}, \code{nu_lcb}, \code{theta}, \code{n},
 #'   \code{n_stage2}, \code{n_cells}, \code{n_cells_degenerate},
-#'   \code{mass_degenerate}, \code{method}.
+#'   \code{mass_degenerate}, \code{n_cells_nonmonotone},
+#'   \code{mass_nonmonotone}, \code{method}.
+#'
+#'   A cell in which M | D = 1 does not stochastically dominate M | D = 0
+#'   contributes zero and is counted in \code{n_cells_nonmonotone}. KR's closed
+#'   form for \eqn{\tilde\theta_{kk}^{\min}} is derived under monotonicity and
+#'   returns invalid values without it, so this is a correctness guard and not a
+#'   convenience: on Baranov's five-valued mediator the unguarded expression
+#'   gives \eqn{-0.222} at \eqn{k = 2}.
 #' @export
 lb_frac_affected_x <- function(df, d, m, y, x = NULL,
                                at_group = NULL,
@@ -124,6 +132,23 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
   a <- as.numeric(M == k) - as.numeric(M >= k)
   b <- as.numeric(M >= k)
 
+  # Monotonicity is not optional here. KR's eq. (8) closed form for
+  # theta_kk_min is derived under M(1) >= M(0), i.e. stochastic dominance of
+  # M | D = 1 over M | D = 0. When the sample violates it, the expression is no
+  # longer the minimum over Theta_I and psi_k stops being a valid lower bound:
+  # on the Baranov five-valued mediator it returns -0.222 at k = 2.
+  # A violating cell therefore contributes zero, which is valid because
+  # theta_kk(x) nu_k(x) >= 0, and is counted so the cost is visible.
+  monotone_ok <- function(j) {
+    if (length(j) == 0L) return(FALSE)
+    j1 <- j[D[j] == 1]; j0 <- j[D[j] == 0]
+    if (length(j1) == 0L || length(j0) == 0L) return(FALSE)
+    lv <- sort(unique(M[j]))
+    s1 <- vapply(lv, function(v) mean(M[j1] >= v), numeric(1))
+    s0 <- vapply(lv, function(v) mean(M[j0] >= v), numeric(1))
+    all(s1 >= s0 - 1e-9)
+  }
+
   idx <- which(f2)
   n2  <- length(idx)
   if (n2 == 0L) stop("stage-2 fold is empty")
@@ -135,6 +160,7 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
   thc <- stats::setNames(numeric(length(lv)), lv)   # cell theta_kk_min
   w   <- stats::setNames(numeric(length(lv)), lv)   # cell weight
   degenerate <- stats::setNames(logical(length(lv)), lv)
+  nonmono    <- stats::setNames(logical(length(lv)), lv)
   mu1 <- mu0 <- pih <- a1 <- b0 <- tau            # per-cell nuisances
 
   for (cx in lv) {
@@ -142,11 +168,13 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
     j1 <- j[D[j] == 1]
     j0 <- j[D[j] == 0]
     w[cx] <- length(j) / n2
-    if (length(j1) == 0L || length(j0) == 0L) {
-      # No contrast available in this cell. Contributing zero is valid, since
-      # eta_k(x) >= 0; it is conservative, and it is exactly the price of thin
-      # cells that motivates not binning at all.
+    if (length(j1) == 0L || length(j0) == 0L || !monotone_ok(j)) {
+      # No contrast available in this cell, or monotonicity fails in it.
+      # Contributing zero is valid either way, since theta_kk(x) nu_k(x) >= 0;
+      # it is conservative, and the thin-cell case is exactly the price of
+      # binning that motivates not binning at all.
       degenerate[cx] <- TRUE
+      nonmono[cx] <- length(j1) > 0L && length(j0) > 0L
       tau[cx] <- 0; thc[cx] <- 0
       next
     }
@@ -209,5 +237,7 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
        n_cells = length(lv),
        n_cells_degenerate = sum(degenerate),
        mass_degenerate = sum(w[degenerate]),
+       n_cells_nonmonotone = sum(nonmono),
+       mass_nonmonotone = sum(w[nonmono]),
        method = method)
 }
