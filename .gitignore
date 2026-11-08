@@ -6,3 +6,10 @@
 .DS_Store
 gurobi.log
 README_cache
+
+# generated: namespace-stripped copies used to source package files without
+# installing the package (see simulations/README)
+src/
+# Monte Carlo output
+simulations/results/
+simulations/*.log
