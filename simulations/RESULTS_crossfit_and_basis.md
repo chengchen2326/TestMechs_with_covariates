@@ -110,3 +110,59 @@ recover the lost power. Each was stated as a testable prediction first. The
 checks that caught them — comparison against KR's own function, against an
 earlier run, and against brute-force enumeration — belong in the replication
 package, not only in the working process.
+
+---
+
+# The standard error is conditional on $\hat A$, and that is the point
+
+Two things were flagged as problems today and both were my own measurement
+errors. Recording them because the resolution is a remark the paper needs.
+
+## False alarm 1 — the Design C size anomaly
+
+Design C at 400 replications showed size 0.075 and 0.083 in the `signflip`
+configuration at $n = 4000$, against a nominal 0.05. I called 3 standard errors
+"not noise" without accounting for having scanned 24 cells, where roughly one
+excursion past two standard errors is expected by chance. At 2000 replications
+the same cells give 0.0485 and 0.0530, and all twelve `signflip` cells lie in
+0.0475–0.0580.
+
+## False alarm 2 — the apparent variance bug
+
+An audit comparing the reported standard error to the empirical dispersion of
+$\hat\eta$ found the ratio deteriorating with $n$ in the `homog` configuration
+at an interior mediator value: 0.965, 0.828, 0.741 at $n = 1000, 4000, 16000$.
+A bootstrap agreed, putting the influence-function standard error at 0.57 of
+the bootstrap one at $k = 3$.
+
+Both comparisons were mis-specified. The influence function estimates the
+standard deviation **conditional on $\hat A$**, while the Monte Carlo and the
+bootstrap both re-estimate $\hat A$ on every draw. When $\hat A$ moves, the
+estimand $\eta_k^{\hat A}$ moves with it, so the extra dispersion is not
+estimation error that needs covering.
+
+Holding fold 1 fixed and redrawing only fold 2 settles it:
+
+| $k$ | $n_2$ | IF SE | conditional empirical sd | ratio | conditional coverage |
+|---|---|---|---|---|---|
+| 3 | 2800 | 0.013520 | 0.013777 | **0.981** | 1.000 |
+| 3 | 11200 | 0.004938 | 0.004901 | **1.008** | 1.000 |
+| 5 | 2800 | 0.015432 | 0.015661 | 0.985 | 0.935 |
+| 5 | 11200 | 0.007516 | 0.007442 | 1.010 | 0.950 |
+
+## The remark the paper needs
+
+A reader will make the same objection: the reported standard error is smaller
+than the sampling dispersion of the estimate. It is supposed to be. The
+argument is:
+
+1. Conditional on $\hat A$, the lower confidence bound covers
+   $\eta_k^{\hat A}$ with probability at least $1 - \alpha$.
+2. $\eta_k^{\hat A} \le \eta_k$ for **every** $A$, by dual feasibility — this
+   is the same weak-duality step that licenses the whole procedure.
+3. By iterated expectations the bound covers $\eta_k$ unconditionally.
+
+So the variation in $\hat A$ never has to be paid for. That is precisely what
+sample splitting buys, and without the remark a reader will read the gap
+between the standard error and the dispersion as a defect rather than as the
+mechanism working.
