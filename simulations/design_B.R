@@ -69,10 +69,10 @@ cut_cols <- function(df, cols, J) {
   cbind(df, as.data.frame(out))
 }
 
-run_design_B <- function(signals = c("x1", "x1x2"),
+run_design_B <- function(signals = c("x1", "x1x2"), t = 1,
                          n_grid = c(500, 2000, 8000), p_grid = c(2, 5),
                          n_reps = 400, seed = 20261108) {
-  tr <- truth_B()
+  tr <- truth_B(amp = AMP * t)
   cat(sprintf("truth: E[eta_0(X)] = %.4f, eta_0^pooled = 0 exactly\n", tr$eta_cond))
   cat(sprintf("oracle bins per covariate = %d; all-covariate bins = %d\n\n",
               J_ORACLE, J_ALL))
@@ -83,7 +83,7 @@ run_design_B <- function(signals = c("x1", "x1x2"),
     if (p < length(sig_cols)) next
     acc <- list()
     for (r in seq_len(n_reps)) {
-      df <- dgp_B(n, p, signal = sg)
+      df <- dgp_B(n, p, signal = sg, amp = AMP * t)
       xs <- paste0("x", seq_len(p))
       dfp <- df
       for (cc in xs) { dfp[[paste0(cc, "_2")]] <- df[[cc]]^2
@@ -118,7 +118,7 @@ run_design_B <- function(signals = c("x1", "x1x2"),
       A <- acc[[nm]]
       target <- if (nm == "pooled") tr$eta_pooled else tr$eta_cond
       rows[[length(rows) + 1]] <- data.frame(
-        signal = sg, n = n, p = p, arm = nm, reps = nrow(A),
+        signal = sg, t = t, n = n, p = p, arm = nm, reps = nrow(A),
         mean_eta = mean(A$eta), mean_lcb = mean(A$lcb),
         power = mean(A$lcb > 0), coverage = mean(A$lcb <= target + 1e-12),
         cells = mean(A$cells), deg_mass = mean(A$deg))
@@ -129,10 +129,13 @@ run_design_B <- function(signals = c("x1", "x1x2"),
 }
 
 if (sys.nframe() == 0L) {
-  out <- run_design_B(n_reps = as.integer(Sys.getenv("TM_REPS", "400")))
+  tgrid <- as.numeric(strsplit(Sys.getenv("TM_T", "0,0.5,1"), ",")[[1]])
+  out <- NULL
+  for (tt in tgrid)
+    out <- rbind(out, run_design_B(t = tt, n_reps = as.integer(Sys.getenv("TM_REPS", "400"))))
   dir.create("results", showWarnings = FALSE)
   write.csv(out, "results/design_B.csv", row.names = FALSE)
   cat("\n")
-  print(out[, c("signal","n","p","arm","mean_lcb","power","coverage","cells","deg_mass")],
+  print(out[, c("signal","t","n","p","arm","mean_lcb","power","coverage","cells","deg_mass")],
         row.names = FALSE, digits = 3)
 }

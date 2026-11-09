@@ -32,6 +32,7 @@ for (f in c("src_remove_missing_from_df.R", "src_lb_frac_affected.R",
             "src_discretize_y.R", "src_lb_frac_affected_x.R",
             "src_simulate_data_multiM_x.R")) source(file.path(SRC, f))
 source("calib_C.R")
+source("violation_scale.R")
 
 # ---------------------------------------------------- sign-flipping cells
 # Shift mass between the extreme Y bins of the treated law, in opposite
@@ -70,22 +71,25 @@ signflip_cells <- function(base, k, delta = 0.08, coupling = "maximal") {
 }
 
 build_config <- function(config, coupling, K_target = 5, Q = 5,
-                         xvar = "grandmother_baseline", delta = 0.20) {
+                         xvar = "grandmother_baseline", delta = 0.20, t = 1) {
   if (config == "split") {
     bc <- baranov_cells(K_target, Q, xvar = xvar, coupling = coupling, verbose = FALSE)
+    bc$cells <- scale_violation_multi(bc$cells, t, coupling)
     return(bc)
   }
   bc <- baranov_cells(K_target, Q, xvar = NULL, coupling = coupling, verbose = FALSE)
   base <- bc$cells[[1]]
-  if (config == "homog")
-    return(list(cells = list(base, base), p_x = c(0.5, 0.5), K = bc$K, Q = bc$Q))
+  if (config == "homog") {
+    cl <- scale_violation_multi(list(base, base), t, coupling)
+    return(list(cells = cl, p_x = c(0.5, 0.5), K = bc$K, Q = bc$Q))
+  }
   if (config == "signflip") {
     # Remove compliers, so that the M | D marginals coincide and the pooled
     # bound is exactly zero rather than merely small: with theta diagonal
     # everyone is an always-taker, the complier-mass term vanishes, and
     # averaging the two cells' treated outcome laws restores the control law.
     base$theta <- diag(rowSums(base$theta))
-    cl <- signflip_cells(base, k = K_target, delta = delta, coupling = coupling)
+    cl <- signflip_cells(base, k = K_target, delta = delta * t, coupling = coupling)
     return(list(cells = cl, p_x = c(0.5, 0.5), K = bc$K, Q = bc$Q))
   }
   stop("unknown config")
@@ -94,16 +98,17 @@ build_config <- function(config, coupling, K_target = 5, Q = 5,
 run_design_C <- function(configs = c("homog", "split", "signflip"),
                          couplings = c("maximal", "independent"),
                          focal_k = NULL, n_grid = c(1000, 4000),
-                         n_reps = 300, K_target = 5, Q = 5, seed = 20261108) {
+                         n_reps = 300, K_target = 5, Q = 5, t = 1,
+                         seed = 20261108) {
   set.seed(seed)
   rows <- list()
   for (cfg in configs) for (cpl in couplings) {
-    B <- build_config(cfg, cpl, K_target, Q)
+    B <- build_config(cfg, cpl, K_target, Q, t = t)
     ks <- if (is.null(focal_k)) B$K else focal_k
     for (k in ks) {
       pb <- population_bound_multiM_x(B$cells, B$p_x, at_group = k)
-      cat(sprintf("\n[%s / %s] k = %d: E[eta(X)] = %.5f  eta_pooled = %.5f  truth = %.5f  slack = %.5f\n",
-                  cfg, cpl, k, pb$eta_conditional, pb$eta_pooled,
+      cat(sprintf("\n[%s / %s / t=%.2f] k = %d: E[eta(X)] = %.5f  eta_pooled = %.5f  truth = %.5f  slack = %.5f\n",
+                  cfg, cpl, t, k, pb$eta_conditional, pb$eta_pooled,
                   pb$true_product, pb$slack_conditional))
       for (n in n_grid) {
         acc <- list()
@@ -123,7 +128,7 @@ run_design_C <- function(configs = c("homog", "split", "signflip"),
           A <- acc[[nm]]
           bound <- if (nm %in% c("pooled","plugin_0")) pb$eta_pooled else pb$eta_conditional
           rows[[length(rows)+1]] <- data.frame(
-            config=cfg, coupling=cpl, k=k, n=n, arm=nm, reps=nrow(A),
+            config=cfg, coupling=cpl, t=t, k=k, n=n, arm=nm, reps=nrow(A),
             bound=bound, truth=pb$true_product,
             mean_eta=mean(A$eta), bias_vs_bound=mean(A$eta)-bound,
             mean_lcb=if (all(is.na(A$lcb))) NA_real_ else mean(A$lcb, na.rm=TRUE),
@@ -140,12 +145,15 @@ run_design_C <- function(configs = c("homog", "split", "signflip"),
 }
 
 if (sys.nframe() == 0L) {
-  out <- run_design_C(n_reps = as.integer(Sys.getenv("TM_REPS","300")),
-                      focal_k = as.integer(strsplit(Sys.getenv("TM_K","5"), ",")[[1]]))
+  tgrid <- as.numeric(strsplit(Sys.getenv("TM_T","0,0.5,1"), ",")[[1]])
+  out <- NULL
+  for (tt in tgrid)
+    out <- rbind(out, run_design_C(n_reps = as.integer(Sys.getenv("TM_REPS","300")),
+                   focal_k = as.integer(strsplit(Sys.getenv("TM_K","5"), ",")[[1]]), t = tt))
   dir.create("results", showWarnings = FALSE)
   write.csv(out, "results/design_C.csv", row.names = FALSE)
   cat("\n")
-  print(out[, c("config","coupling","k","n","arm","bound","truth","mean_lcb",
+  print(out[, c("config","coupling","t","k","n","arm","bound","truth","mean_lcb",
                 "power","cover_bound","cover_truth")],
         row.names = FALSE, digits = 3)
 }

@@ -20,6 +20,7 @@
 suppressMessages({library(purrr); library(Rglpk)})
 
 SRC <- Sys.getenv("TM_SRC", "../src")
+source("violation_scale.R")
 for (f in c("src_remove_missing_from_df.R", "src_lb_frac_affected.R",
             "src_simulate_data_binaryM.R", "src_simulate_data_binaryM_x.R",
             "src_lb_frac_affected_x.R")) source(file.path(SRC, f))
@@ -61,7 +62,7 @@ bursztyn_cells <- function() {
 run_design_A <- function(calibration = c("sign", "bursztyn"),
                          n_grid = c(284, 500, 1000, 2000, 5000),
                          n_reps = 500, at_group = 0, alpha = 0.05,
-                         seed = 20261108) {
+                         t = 1, seed = 20261108) {
 
   calibration <- match.arg(calibration)
   if (calibration == "sign") {
@@ -69,9 +70,10 @@ run_design_A <- function(calibration = c("sign", "bursztyn"),
   } else {
     bc <- bursztyn_cells(); cells <- bc$cells; p_x <- bc$p_x
   }
+  cells <- scale_violation_binary(cells, t)
 
   truth <- population_bound_binaryM_x(cells, p_x, at_group = at_group)
-  cat(sprintf("\ncalibration = %s\n", calibration))
+  cat(sprintf("\ncalibration = %s, t = %.2f\n", calibration, t))
   cat(sprintf("  eta by cell      : %s\n",
               paste(sprintf("%.4f", truth$eta_by_cell), collapse = ", ")))
   cat(sprintf("  E[eta(X)] = %.4f   eta_pooled = %.4f   (gap %.4f)\n",
@@ -107,7 +109,7 @@ run_design_A <- function(calibration = c("sign", "bursztyn"),
       target <- if (nm %in% c("pooled", "plugin_0")) truth$eta_pooled
                 else truth$eta_conditional
       rows[[length(rows) + 1]] <- data.frame(
-        calibration = calibration, n = n, arm = nm, reps = nrow(A),
+        calibration = calibration, t = t, n = n, arm = nm, reps = nrow(A),
         mean_eta   = mean(A$eta),
         bias       = mean(A$eta) - target,
         mean_lcb   = if (all(is.na(A$lcb))) NA_real_ else mean(A$lcb, na.rm = TRUE),
@@ -129,15 +131,16 @@ run_design_A <- function(calibration = c("sign", "bursztyn"),
 
 if (sys.nframe() == 0L) {
   n_reps <- as.integer(Sys.getenv("TM_REPS", "500"))
+  tgrid <- as.numeric(strsplit(Sys.getenv("TM_T", "0,0.5,1"), ",")[[1]])
   out <- NULL
-  for (cal in c("sign", "bursztyn")) {
-    r <- run_design_A(calibration = cal, n_reps = n_reps)
+  for (cal in c("sign", "bursztyn")) for (tt in tgrid) {
+    r <- run_design_A(calibration = cal, n_reps = n_reps, t = tt)
     out <- rbind(out, r)
   }
   dir.create("results", showWarnings = FALSE)
   write.csv(out, "results/design_A.csv", row.names = FALSE)
   cat("\n")
-  print(out[, c("calibration", "n", "arm", "mean_eta", "bias",
+  print(out[, c("calibration", "t", "n", "arm", "mean_eta", "bias",
                 "mean_lcb", "power", "coverage", "deg_mass")],
         row.names = FALSE, digits = 4)
 }
