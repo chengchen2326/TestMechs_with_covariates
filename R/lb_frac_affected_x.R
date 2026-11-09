@@ -90,6 +90,7 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
 
   k  <- at_group
   yv <- sort(unique(Y))
+  mvals_sorted <- sort(unique(M))
 
   # ---------------------------------------------------------------- folds
   if (method == "plugin") {
@@ -232,8 +233,19 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
   # slightly negative eta then becomes a large negative nu (-0.222 there). The
   # numerator is truncated first, since nu >= 0, and the ratio is withheld when
   # the denominator is too small to support it.
+  # The ratio eta / theta is a valid lower bound on nu_k only when the
+  # denominator is pinned down by the identified set. Monotonicity pins it at
+  # BOTH ends of the support of M -- treated units at the bottom category were
+  # there under control too, so theta_00 = P(M = m_0 | D = 1), and controls at
+  # the top stay there, so theta_KK = P(M = m_K | D = 0) -- and nowhere else.
+  # In the interior both numerator and denominator are only bounded below, and
+  # a <= c with b <= d says nothing about a/b versus c/d: the division is
+  # ANTI-CONSERVATIVE. On Baranov's five-valued mediator it gives 0.0704 at
+  # k = 4 where the correct bound is 0.0495. Use nu_bound_joint(), which solves
+  # KR's linear-fractional program by the Charnes-Cooper transformation.
+  k_pinned <- (kk_index <- match(at_group, mvals_sorted)) %in% c(1L, length(mvals_sorted))
   theta_floor <- 5 / n2
-  if (theta > theta_floor) {
+  if (k_pinned && theta > theta_floor) {
     nu <- max(eta, 0) / theta
     if_nu  <- (if_eta - nu * if_th) / theta        # delta method
     nu_se  <- stats::sd(if_nu) / sqrt(n2)
@@ -242,6 +254,9 @@ lb_frac_affected_x <- function(df, d, m, y, x = NULL,
     nu <- nu_se <- NA_real_
     nu_lcb <- NA_real_
   }
+  if (!k_pinned)
+    attr(nu, "reason") <- paste("theta_kk is not pinned down at an interior",
+      "mediator value; use nu_bound_joint() for the share scale")
 
   # The plug-in point estimate is the one practitioners compute: the supremum
   # is taken on the same data used to report the number, so it is biased up.

@@ -89,6 +89,10 @@ build_config <- function(config, coupling, K_target = 5, Q = 5,
     # everyone is an always-taker, the complier-mass term vanishes, and
     # averaging the two cells' treated outcome laws restores the control law.
     base$theta <- diag(rowSums(base$theta))
+    # Scale the violation in EVERY stratum, not only the one the sign flip
+    # perturbs. Without this the other mediator values keep the raw empirical
+    # violation and t = 0 is not a null: k = 3 came out at 0.0393.
+    base <- scale_violation_multi(list(base), t, coupling)[[1]]
     cl <- signflip_cells(base, k = K_target, delta = delta * t, coupling = coupling)
     return(list(cells = cl, p_x = c(0.5, 0.5), K = bc$K, Q = bc$Q))
   }
