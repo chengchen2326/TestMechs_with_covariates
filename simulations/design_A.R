@@ -15,6 +15,24 @@
 #   pooled    split-sample, no covariates       ("pooled_split")
 #   plugin_x  full-sample sup, covariates       ("plugin")
 #   plugin_0  full-sample sup, no covariates    -- i.e. current practice
+#   kr_cs     KR's own Cox-Shi test of the sharp null, full sample, pooled
+#
+# On the kr_cs arm. It is not an estimator and reports no bound: "power" for it
+# is the rejection rate of KR's test, and at t = 0 that is its size. Two
+# asymmetries are deliberate and must be carried into any write-up.
+#   (i)  It uses the WHOLE sample. We split. That is a real advantage to KR and
+#        it is not corrected for -- correcting it would answer a question
+#        nobody asks.
+#   (ii) It tests the JOINT null across every k, while our arms target
+#        at_group. KR therefore aggregate evidence our criterion discards.
+# Both favour KR. The arm is here because the comparison it makes possible --
+# does conditioning beat a proper pooled TEST, not merely a pooled bound --
+# cannot be made without them.
+#
+# kr_on = TRUE puts a call to KR's code inside the rep loop, and KR's bootstrap
+# pins the global RNG. kr_reject guards against that (see kr_arm.R); without the
+# guard every arm in this file, not just kr_cs, silently collapses to one
+# repeated draw. Results produced with kr_on = TRUE before 2026-11-10 are void.
 # =====================================================================
 
 suppressMessages({library(purrr); library(Rglpk)})
@@ -24,6 +42,7 @@ source("violation_scale.R")
 for (f in c("src_remove_missing_from_df.R", "src_lb_frac_affected.R",
             "src_simulate_data_binaryM.R", "src_simulate_data_binaryM_x.R",
             "src_lb_frac_affected_x.R")) source(file.path(SRC, f))
+source("kr_arm.R")
 
 # ------------------------------------------------------------ calibrations
 calib_sign <- list(
@@ -62,7 +81,8 @@ bursztyn_cells <- function() {
 run_design_A <- function(calibration = c("sign", "bursztyn"),
                          n_grid = c(284, 500, 1000, 2000, 5000),
                          n_reps = 500, at_group = 0, alpha = 0.05,
-                         t = 1, seed = 20261108) {
+                         t = 1, seed = 20261108,
+                         kr_on = TRUE, kr_method = "CS") {
 
   calibration <- match.arg(calibration)
   if (calibration == "sign") {
@@ -86,9 +106,15 @@ run_design_A <- function(calibration = c("sign", "bursztyn"),
   rows <- list()
   for (n in n_grid) {
     acc <- list(ours = NULL, pooled = NULL, plugin_x = NULL, plugin_0 = NULL)
+    kr <- list(reject = numeric(0), pval = numeric(0), fail = 0L)
     for (r in seq_len(n_reps)) {
       df <- simulate_data_binaryM_x(cells, p_x = p_x, n = n, p_d = 0.5)
       df$const <- 1L
+      if (kr_on) {
+        kk <- kr_reject(df, "d", "m", "y", method = kr_method, alpha = alpha)
+        if (is.na(kk$reject)) kr$fail <- kr$fail + 1L
+        else { kr$reject <- c(kr$reject, kk$reject); kr$pval <- c(kr$pval, kk$pval) }
+      }
       fit <- function(xv, mth)
         tryCatch(lb_frac_affected_x(df, "d", "m", "y", x = xv,
                                     at_group = at_group, method = mth,
@@ -121,6 +147,18 @@ run_design_A <- function(calibration = c("sign", "bursztyn"),
                      else mean(A$lcb <= target + 1e-12, na.rm = TRUE),
         mean_nu_lcb = if (all(is.na(A$nu_lcb))) NA_real_ else mean(A$nu_lcb, na.rm = TRUE),
         deg_cells  = mean(A$deg), deg_mass = mean(A$mass))
+    }
+    if (kr_on && length(kr$reject)) {
+      # No bound, so eta/lcb/coverage are NA by construction, not by failure.
+      rows[[length(rows) + 1]] <- data.frame(
+        calibration = calibration, t = t, n = n, arm = "kr_cs",
+        reps = length(kr$reject),
+        mean_eta = NA_real_, bias = NA_real_, mean_lcb = NA_real_,
+        power = mean(kr$reject),
+        coverage = NA_real_, mean_nu_lcb = NA_real_,
+        deg_cells = NA_real_, deg_mass = NA_real_)
+      cat(sprintf("    kr_cs: reject %.3f  (median p %.3f, %d failures)\n",
+                  mean(kr$reject), stats::median(kr$pval), kr$fail))
     }
     cat(sprintf("  n = %5d done\n", n))
   }
