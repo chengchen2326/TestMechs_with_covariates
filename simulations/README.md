@@ -82,3 +82,18 @@ Regression targets, for checking any change to the estimators:
 The first is Kwon & Roth's published figure ("at least 11 percent of
 never-takers"). The second is the test that the ATE reformulation is right: with
 a constant covariate the new estimator must collapse onto the original.
+
+## Standalone verification
+
+These scripts check a claim in the paper rather than estimating anything. They
+need no data and no `src/` setup — `Rscript <file>` is enough.
+
+| script | claim checked |
+|---|---|
+| `verify_dual.R` | Proposition 1 is the Kantorovich dual restricted to one direction: `(-g_k, g_k)` is dual-feasible for every `A`, its dual objective is `psi_k(A)`, and `psi_k(A)` never exceeds the primal transport value. Includes a falsification check — drop monotonicity and feasibility fails in 87% of draws. |
+| `verify_defiers.R` | The defier LP and its dual agree, and the normalised duals are free of the box. |
+| `verify_C.R`, `verify_C_exact.R` | The Design C population bound matches the realised law. |
+| `nu_check.R` | The share scale via Charnes--Cooper reproduces `lb_frac_affected`. |
+
+`verify_dual.R` runs in about two minutes and prints four tolerances; all four
+should be at machine precision, and the last line should report roughly 87%.
