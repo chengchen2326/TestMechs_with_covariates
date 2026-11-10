@@ -35,12 +35,25 @@ source("design_A.R")
 n_grid  <- as.numeric(strsplit(Sys.getenv("TM_N", "284,1000,5000"), ",")[[1]])
 n_reps  <- as.integer(Sys.getenv("TM_REPS", "300"))
 tgrid   <- as.numeric(strsplit(Sys.getenv("TM_T", "0,1"), ",")[[1]])
+cals    <- strsplit(Sys.getenv("TM_CAL", "sign,bursztyn"), ",")[[1]]
+outfile <- Sys.getenv("TM_OUT", "results/kr_compare.csv")
 alpha   <- 0.05
 at_group <- 0
 
+# A full grid is about 20 minutes per (calibration, t) block, so a wall-clock
+# limit can land mid-run. Each row is written the moment it is finished and
+# every number in the file is machine-written: nothing is ever transcribed by
+# hand from a log, and a kill costs one block rather than the whole study.
+dir.create("results", showWarnings = FALSE)
+emit <- function(row) {
+  write.table(row, outfile, sep = ",", row.names = FALSE,
+              col.names = !file.exists(outfile), append = file.exists(outfile),
+              qmethod = "double")
+}
+
 set.seed(20261110)
 rows <- list()
-for (cal in c("sign", "bursztyn")) {
+for (cal in cals) {
   for (tt in tgrid) {
     if (cal == "sign") { cells <- calib_sign; p_x <- c(0.5, 0.5)
     } else { bc <- bursztyn_cells(); cells <- bc$cells; p_x <- bc$p_x }
@@ -64,11 +77,13 @@ for (cal in c("sign", "bursztyn")) {
         kk <- kr_reject(df, "d", "m", "y", method = "CS", alpha = alpha)
         if (is.na(kk$reject)) krfail <- krfail + 1L else krrej <- c(krrej, kk$reject)
       }
-      rows[[length(rows) + 1L]] <- data.frame(
+      row <- data.frame(
         calibration = cal, t = tt, n = n, reps = n_reps,
         eta_cond = truth$eta_conditional, eta_pooled = truth$eta_pooled,
         ours = mean(ours), pooled = mean(pooled), kr_cs = mean(krrej),
         kr_failures = krfail)
+      emit(row)
+      rows[[length(rows) + 1L]] <- row
       cat(sprintf("   n = %5d   ours %.3f   pooled %.3f   kr_cs %.3f   (%d kr failures)\n",
                   n, mean(ours), mean(pooled), mean(krrej), krfail))
     }
@@ -76,8 +91,6 @@ for (cal in c("sign", "bursztyn")) {
 }
 
 out <- do.call(rbind, rows)
-dir.create("results", showWarnings = FALSE)
-write.csv(out, "results/kr_compare.csv", row.names = FALSE)
 cat("\n")
 print(out[, c("calibration", "t", "n", "eta_cond", "eta_pooled",
               "ours", "pooled", "kr_cs")], row.names = FALSE, digits = 3)
